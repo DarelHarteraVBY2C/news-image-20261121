@@ -1,86 +1,99 @@
-// news-image-20261121: one-page newspaper front page for Saturday 21 November 2026.
-// The picture is entry.jpg next to this file. This program checks that it is
-// a complete 1024x1024 JPEG under 1 MiB, copies it to the output directory
-// as entry.png, then re-reads the copy and checks it byte for byte, so two
-// runs always produce identical bytes.
+// Entry for the 21 November 2026 news-image competition.
+// Saturday's front page is entry.jpg in this folder. The job here is
+// small and strict: confirm the picture is a whole 1024 by 1024 JPEG
+// under one mebibyte, copy it to the output folder as entry.png, and
+// confirm the copy matches the original byte for byte. Running it twice
+// must give the same bytes both times.
 //
-// Run it yourself: mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+// Try it: mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import * as fs from 'node:fs';
-import * as crypto from 'node:crypto';
-import * as path from 'node:path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// The folder this file lives in.
-const DIR = path.dirname(fileURLToPath(import.meta.url));
-const SRC = 'entry.jpg';
-const LIMIT = 1048576; // 1 MiB
-const SIDE = 1024;
+const HOME = dirname(fileURLToPath(import.meta.url));
+const PICTURE = 'entry.jpg';
+const MAX_BYTES = 1048576;
+const EDGE = 1024;
 
-type Size = { width: number; height: number };
+interface Dims {
+  w: number;
+  h: number;
+}
 
-// Dimensions from the first SOF0/SOF2 segment; undefined when the buffer
-// is not a JPEG or holds no size segment before the end-of-image marker.
-function jpegSize(buf: Buffer): Size | undefined {
-  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return undefined;
-  let pos = 2;
-  let found: Size | undefined;
-  while (pos + 4 <= buf.length && found === undefined) {
-    if (buf[pos] !== 0xff) break;
-    const code = buf[pos + 1];
-    if (code === 0xd9) break; // EOI: end of image, no size found
-    if (code === 0x01 || (code >= 0xd0 && code <= 0xd7)) {
-      pos += 2;
+// Hunt for the first frame header (SOF0 or SOF2) and read the picture's
+// width and height out of it. Returns null when the bytes are not a JPEG
+// or no frame header turns up before the image ends.
+function jpegDimensions(bytes: Buffer): Dims | null {
+  if (bytes.length < 4) return null;
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  let cursor = 2;
+  while (cursor + 4 <= bytes.length) {
+    if (bytes[cursor] !== 0xff) return null;
+    const marker = bytes[cursor + 1];
+    if (marker === 0xd9) return null;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      cursor += 2;
       continue;
     }
-    const len = buf.readUInt16BE(pos + 2);
-    if (len < 2 || pos + 2 + len > buf.length) break;
-    if (code === 0xc0 || code === 0xc2) {
-      found = { height: buf.readUInt16BE(pos + 5), width: buf.readUInt16BE(pos + 7) };
-    } else {
-      pos += 2 + len;
+    const segLen = bytes.readUInt16BE(cursor + 2);
+    if (segLen < 2) return null;
+    if (cursor + 2 + segLen > bytes.length) return null;
+    if (marker === 0xc0 || marker === 0xc2) {
+      return {
+        h: bytes.readUInt16BE(cursor + 5),
+        w: bytes.readUInt16BE(cursor + 7),
+      };
     }
+    cursor += 2 + segLen;
   }
-  return found;
+  return null;
 }
 
-function sha256(buf: Buffer): string {
-  return crypto.createHash('sha256').update(buf).digest('hex');
+function digest(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
 }
 
-function fail(msg: string, code: number): never {
-  process.stderr.write(`news-image-20261121: ${msg}\n`);
+function die(text: string, code: number): never {
+  process.stderr.write(`news-image-20261121: ${text}\n`);
   process.exit(code);
 }
 
-const srcPath = path.join(DIR, SRC);
-if (!fs.existsSync(srcPath)) {
-  fail(`no ${SRC} next to main.ts; run compose.py first`, 2);
-}
-const data = fs.readFileSync(srcPath);
-if (data.length > LIMIT) {
-  fail(`${SRC} is ${data.length} bytes, over the ${LIMIT} byte limit`, 1);
-}
-const size = jpegSize(data);
-if (size === undefined) {
-  fail(`${SRC} has no JPEG size marker`, 1);
-}
-if (size.width !== SIDE || size.height !== SIDE) {
-  fail(`${SRC} is ${size.width}x${size.height}, must be ${SIDE}x${SIDE}`, 1);
+function main(): void {
+  const source = join(HOME, PICTURE);
+  if (!existsSync(source)) {
+    die(`missing ${PICTURE} beside main.ts; build it with compose.py first`, 2);
+  }
+  const original = readFileSync(source);
+  if (original.length > MAX_BYTES) {
+    die(`${PICTURE} is ${original.length} bytes, over the ${MAX_BYTES} byte cap`, 1);
+  }
+  const dims = jpegDimensions(original);
+  if (dims === null) {
+    die(`${PICTURE} carries no JPEG frame header`, 1);
+  }
+  if (dims.w !== EDGE || dims.h !== EDGE) {
+    die(`${PICTURE} measures ${dims.w}x${dims.h}, expected ${EDGE}x${EDGE}`, 1);
+  }
+  const destDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+  mkdirSync(destDir, { recursive: true });
+  const dest = join(destDir, 'entry.png');
+  writeFileSync(dest, original);
+  const again = readFileSync(dest);
+  if (again.length !== original.length || digest(again) !== digest(original)) {
+    die(`the copy at ${dest} is not identical to ${PICTURE}`, 1);
+  }
+  // Confirm the copy's own frame header too, so a cut-off or swapped
+  // file is caught even when its length happens to line up.
+  const againDims = jpegDimensions(again);
+  if (againDims === null || againDims.w !== EDGE || againDims.h !== EDGE) {
+    die(`the copy at ${dest} does not parse as a ${EDGE}x${EDGE} JPEG`, 1);
+  }
+  const short = digest(again).slice(0, 16);
+  process.stdout.write(
+    `news-image-20261121: wrote ${dest} (${again.length} bytes, JPEG 1024x1024, sha256 ${short}...)\n`,
+  );
 }
 
-const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
-fs.mkdirSync(outDir, { recursive: true });
-const outPath = path.join(outDir, 'entry.png');
-fs.writeFileSync(outPath, data);
-const copy = fs.readFileSync(outPath);
-if (copy.length !== data.length || sha256(copy) !== sha256(data)) {
-  fail(`copy at ${outPath} differs from ${SRC}`, 1);
-}
-// Read the size markers back out of the copy itself: a truncated or
-// swapped target is caught here even if its byte count happens to match.
-const copySize = jpegSize(copy);
-if (copySize === undefined || copySize.width !== SIDE || copySize.height !== SIDE) {
-  fail(`copy at ${outPath} does not read as a ${SIDE}x${SIDE} JPEG`, 1);
-}
-process.stdout.write(`news-image-20261121: wrote ${outPath} (${copy.length} bytes, JPEG 1024x1024, sha256 ${sha256(copy).slice(0, 16)}...)\n`);
+main();

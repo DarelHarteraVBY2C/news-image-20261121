@@ -1,141 +1,141 @@
-"""Build the news-image entry for Saturday 21 November 2026.
+"""Render the 21 November 2026 news-image entry.
 
-Takes the five photo panels in panels/ (kyiv, markets, trump, chapo,
-cop31) and lays them out as a one-page newspaper front page, with the
-day's headlines drawn in PIL so every word is spelled exactly as
-written here. Output is entry.jpg, 1024x1024, under 1 MiB.
+The five photo panels live in panels/ (kyiv, markets, trump, chapo,
+cop31). This script arranges them as a newspaper front page and draws
+the day's headlines with PIL, so the wording is exactly what is written
+below. The result is entry.jpg, 1024 by 1024, under one mebibyte.
 
-Run: python3 compose.py
+Run it with: python3 compose.py
 """
 import os
+import textwrap
 
 from PIL import Image, ImageDraw, ImageFont
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-W, H = 1024, 1024
-PAPER = (253, 251, 247)
-INK = (17, 17, 17)
-MUTED = (85, 85, 85)
-ACCENT = (155, 44, 44)
-RULE = (17, 17, 17)
-HAIR = (204, 204, 204)
+BASE = os.path.dirname(os.path.abspath(__file__))
+CANVAS = (1024, 1024)
 
-SERIF_B = '/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf'
-SANS = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
-SANS_B = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+PALETTE = {
+    'paper': (253, 251, 247),
+    'ink': (17, 17, 17),
+    'soft': (85, 85, 85),
+    'red': (155, 44, 44),
+    'rule': (17, 17, 17),
+    'hair': (204, 204, 204),
+}
+
+FONTS = {
+    'serif': '/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf',
+    'sans': '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+    'sans_bold': '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+}
+
+MARGIN = 16
+CONTENT_W = CANVAS[0] - 2 * MARGIN
 
 
-def load_font(path, size):
-    return ImageFont.truetype(path, size)
+def font(kind, size):
+    return ImageFont.truetype(FONTS[kind], size)
 
 
-def load_panel(name):
-    path = os.path.join(HERE, 'panels', f'{name}.webp')
+def picture(name):
+    path = os.path.join(BASE, 'panels', name + '.webp')
     if not os.path.exists(path):
-        raise SystemExit(f'no panel image: {path}')
+        raise SystemExit('missing panel: ' + path)
     return Image.open(path).convert('RGB')
 
 
-def crop_resize(im, w, h):
-    """Center-crop to the target aspect ratio, then resize to w x h."""
-    target = w / h
-    ratio = im.width / im.height
-    if ratio > target:
-        nw = int(im.height * target)
-        x = (im.width - nw) // 2
-        im = im.crop((x, 0, x + nw, im.height))
+def fit(image, width, height):
+    """Crop the middle of the picture to the wanted shape, then scale it."""
+    want = width / height
+    got = image.width / image.height
+    if got > want:
+        keep = int(image.height * want)
+        left = (image.width - keep) // 2
+        image = image.crop((left, 0, left + keep, image.height))
     else:
-        nh = int(im.width / target)
-        y = (im.height - nh) // 2
-        im = im.crop((0, y, im.width, y + nh))
-    return im.resize((w, h), Image.LANCZOS)
+        keep = int(image.width / want)
+        top = (image.height - keep) // 2
+        image = image.crop((0, top, image.width, top + keep))
+    return image.resize((width, height), Image.LANCZOS)
 
 
-def wrap_text(draw, text, fnt, max_w):
-    words = text.split()
-    lines, cur = [], ''
-    for word in words:
-        trial = f'{cur} {word}'.strip()
-        if draw.textlength(trial, font=fnt) <= max_w:
-            cur = trial
-        else:
-            if cur:
-                lines.append(cur)
-            cur = word
-    if cur:
-        lines.append(cur)
-    return lines
+def draw_wrapped(pen, text, fnt, x, y, width, colour, leading=19):
+    """Draw text folded to fit inside width; returns the y below the last line."""
+    for line in textwrap.wrap(text, width=60):
+        # Measure with the real font and re-fold when the guess is too wide.
+        while pen.textlength(line, font=fnt) > width and ' ' in line:
+            cut = line.rfind(' ')
+            line, rest = line[:cut], line[cut + 1:]
+            pen.text((x, y), line, font=fnt, fill=colour)
+            y += leading
+            line = rest
+        pen.text((x, y), line, font=fnt, fill=colour)
+        y += leading
+    return y
 
 
-def build():
-    img = Image.new('RGB', (W, H), PAPER)
-    d = ImageDraw.Draw(img)
-    mx = 16
-    cw = W - 2 * mx
+def main():
+    page = Image.new('RGB', CANVAS, PALETTE['paper'])
+    pen = ImageDraw.Draw(page)
 
-    # --- masthead ---
-    title = 'THE WORLD IN ONE DAY'
-    tf = load_font(SERIF_B, 46)
-    d.text(((W - d.textlength(title, font=tf)) / 2, 10), title, font=tf, fill=INK)
-    date = 'SATURDAY, 21 NOVEMBER 2026'
-    df = load_font(SANS_B, 19)
-    d.text(((W - d.textlength(date, font=df)) / 2, 62), date, font=df, fill=INK)
-    d.line([(mx, 88), (W - mx, 88)], fill=RULE, width=2)
+    # Masthead: paper name, then the date, then a heavy rule.
+    name = 'THE WORLD IN ONE DAY'
+    name_font = font('serif', 46)
+    pen.text(((CANVAS[0] - pen.textlength(name, font=name_font)) / 2, 10),
+             name, font=name_font, fill=PALETTE['ink'])
+    day = 'SATURDAY, 21 NOVEMBER 2026'
+    day_font = font('sans_bold', 19)
+    pen.text(((CANVAS[0] - pen.textlength(day, font=day_font)) / 2, 62),
+             day, font=day_font, fill=PALETTE['ink'])
+    pen.line([(MARGIN, 88), (CANVAS[0] - MARGIN, 88)], fill=PALETTE['rule'], width=2)
 
-    # --- lead story: Russia's biggest strike on Kyiv ---
-    lead = crop_resize(load_panel('kyiv'), cw, 330)
-    img.paste(lead, (mx, 96))
-    y = 434
-    kf = load_font(SANS_B, 14)
-    d.text((mx, y), 'WAR IN UKRAINE  •  LEAD STORY', font=kf, fill=ACCENT)
-    y += 22
-    hf = load_font(SERIF_B, 38)
-    d.text((mx, y), "RUSSIA'S BIGGEST STRIKE HITS KYIV", font=hf, fill=INK)
-    y += 48
-    sf = load_font(SANS, 19)
-    d.text((mx, y), '400+ drones and 110 missiles overnight; 9 killed, bridges hit, debris falls in Poland.', font=sf, fill=MUTED)
-    d.line([(mx, 540), (W - mx, 540)], fill=RULE, width=2)
+    # Lead story, full width: picture, kicker, headline, standfirst.
+    page.paste(fit(picture('kyiv'), CONTENT_W, 330), (MARGIN, 96))
+    pen.text((MARGIN, 434), 'WAR IN UKRAINE  •  LEAD STORY',
+             font=font('sans_bold', 14), fill=PALETTE['red'])
+    pen.text((MARGIN, 456), "RUSSIA'S BIGGEST STRIKE HITS KYIV",
+             font=font('serif', 38), fill=PALETTE['ink'])
+    pen.text((MARGIN, 504),
+             '400+ drones and 110 missiles overnight; 9 killed, bridges hit, debris falls in Poland.',
+             font=font('sans', 19), fill=PALETTE['soft'])
+    pen.line([(MARGIN, 540), (CANVAS[0] - MARGIN, 540)], fill=PALETTE['rule'], width=2)
 
-    # --- two-column rows ---
-    col_w = (cw - 16) // 2
-    col_x = [mx, mx + col_w + 16]
-    rows = [
-        (548, [
-            ('markets', 'WALL STREET IN CORRECTION',
-             'S&P -3.7%, Nasdaq -5.28%; Nvidia -14% as the AI rout deepens.'),
-            ('trump', 'TRUMP PRESSES EUROPE ON UKRAINE',
-             'Spend the money at home if a deal is reached, he tells leaders.'),
-        ]),
-        (772, [
-            ('chapo', "'EL CHAPO ISIDRO' CAPTURED",
-             'FBI Top-10 fugitive seized in Sinaloa; 11 killed, 8 arrested.'),
-            ('cop31', 'COP31 SPILLS INTO OVERTIME',
-             'Draft drops all fossil-fuel mention; EU says good deal or no deal.'),
-        ]),
+    # The four smaller stories, two to a row.
+    half = (CONTENT_W - 16) // 2
+    left_x = MARGIN
+    right_x = MARGIN + half + 16
+    stories = [
+        (548, left_x, 'markets', 'WALL STREET IN CORRECTION',
+         'S&P -3.7%, Nasdaq -5.28%; Nvidia -14% as the AI rout deepens.'),
+        (548, right_x, 'trump', 'TRUMP PRESSES EUROPE ON UKRAINE',
+         'Spend the money at home if a deal is reached, he tells leaders.'),
+        (772, left_x, 'chapo', "'EL CHAPO ISIDRO' CAPTURED",
+         'FBI Top-10 fugitive seized in Sinaloa; 11 killed, 8 arrested.'),
+        (772, right_x, 'cop31', 'COP31 SPILLS INTO OVERTIME',
+         'Draft drops all fossil-fuel mention; EU says good deal or no deal.'),
     ]
-    for top, cols in rows:
-        for i, (name, headline, sub) in enumerate(cols):
-            x = col_x[i]
-            pic = crop_resize(load_panel(name), col_w, 118)
-            img.paste(pic, (x, top))
-            hy = top + 126
-            hfont = load_font(SERIF_B, 21)
-            d.text((x, hy), headline, font=hfont, fill=INK)
-            sfont = load_font(SANS, 15)
-            for j, line in enumerate(wrap_text(d, sub, sfont, col_w)):
-                d.text((x, hy + 28 + j * 19), line, font=sfont, fill=MUTED)
-        d.line([(mx, top + 208), (W - mx, top + 208)], fill=HAIR, width=1)
+    for top, x, image_name, headline, standfirst in stories:
+        page.paste(fit(picture(image_name), half, 118), (x, top))
+        pen.text((x, top + 126), headline, font=font('serif', 21), fill=PALETTE['ink'])
+        draw_wrapped(pen, standfirst, font('sans', 15), x, top + 154, half,
+                     PALETTE['soft'])
+        pen.line([(MARGIN, top + 208), (CANVAS[0] - MARGIN, top + 208)],
+                 fill=PALETTE['hair'], width=1)
 
-    # --- bottom strip ---
-    strip = "ALSO TODAY:  Anthropic -8.5% to $88.90  ·  Two tankers hit in the Strait of Hormuz  ·  UK-EU youth mobility deal: 100,000 a year"
-    sfont = load_font(SANS, 15)
-    d.text(((W - d.textlength(strip, font=sfont)) / 2, 994), strip, font=sfont, fill=INK)
+    # Foot strip: three more items in one centred line.
+    strip = ("ALSO TODAY:  Anthropic -8.5% to $88.90  ·  "
+             "Two tankers hit in the Strait of Hormuz  ·  "
+             "UK-EU youth mobility deal: 100,000 a year")
+    strip_font = font('sans', 15)
+    pen.text(((CANVAS[0] - pen.textlength(strip, font=strip_font)) / 2, 994),
+             strip, font=strip_font, fill=PALETTE['ink'])
 
-    jpg_path = os.path.join(HERE, 'entry.jpg')
-    img.save(jpg_path, quality=92)
-    print(f'entry.jpg (q92): {os.path.getsize(jpg_path)} bytes')
+    out = os.path.join(BASE, 'entry.jpg')
+    page.save(out, quality=92)
+    print('entry.jpg (q92): {} bytes'.format(os.path.getsize(out)))
     print('limit: 1048576 bytes, 1024x1024')
 
 
 if __name__ == '__main__':
-    build()
+    main()
